@@ -53,13 +53,11 @@ class DictationApp:
             # Vérification préalable de la disponibilité du serveur
             if not self.client.check_health():
                 self.feedback.beep_error()
-                print("
-[ERREUR] Serveur Whisper inactif sur http://localhost:8000/v1 !")
+                print("[ERREUR] Serveur Whisper inactif sur http://localhost:8000/v1 !")
                 print("Démarrez-le en double-cliquant sur scripts/whisper-start.bat")
                 return
 
-            print("
->>> ENREGISTREMENT EN COURS... (Parlez maintenant) <<<")
+            print(">>> ENREGISTREMENT EN COURS... (Parlez maintenant) <<<")
             self.feedback.beep_start()
             self.recorder.start()
         else:
