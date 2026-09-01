@@ -2,7 +2,7 @@
 
 ## 1. Vue d'ensemble
 
-`whisper-dictation` est composé d'un client léger d'écoute clavier et capture microphone sous Windows, communiquant via HTTP avec un serveur d'inférence Whisper (`speaches`) exécuté dans un conteneur Docker accéléré par GPU CUDA. Le serveur est partagé sans duplication de mémoire avec les compétences de transcription de vidéos (`watch-md`).
+`whisper-dictation` est composé d'un client léger d'écoute clavier (API native Win32 `RegisterHotKey`) et capture microphone sous Windows, communiquant via HTTP avec un serveur d'inférence Whisper (`speaches`) exécuté dans un conteneur Docker accéléré par GPU CUDA. Le serveur est partagé sans duplication de mémoire avec les compétences de transcription de vidéos (`watch-md`).
 
 ---
 
@@ -13,6 +13,7 @@
 | `speaches` (Docker) | Conteneur GPU | `8000` | Inférence Whisper (`faster-whisper-large-v3`) sous CUDA fp16 |
 | `whisper_dictation.audio` | Module Python | - | Capture du flux microphone et conversion en WAV 16 kHz |
 | `whisper_dictation.client` | Module Python | - | Requête HTTP POST vers `/v1/audio/transcriptions` |
+| `whisper_dictation.hotkey` | Module Python | - | Écouteur global natif Windows via `RegisterHotKey` |
 | `whisper_dictation.injector` | Module Python | - | Copie presse-papier et simulation de frappe Ctrl+V |
 | `whisper_dictation.feedback` | Module Python | - | Signaux sonores d'état (début, fin, validation, erreur) |
 | `whisper_dictation.server_manager` | Module Python | - | Contrôle de la VRAM (arrêt/démarrage du conteneur) |
@@ -26,7 +27,7 @@
 | Langage | Python | 3.12 |
 | Gestionnaire | uv | >=0.10.0 |
 | Client HTTP | HTTPX | >=0.27.0 |
-| Raccourcis | pynput | >=1.7.6 |
+| Raccourcis | Win32 RegisterHotKey | ctypes |
 | Moteur IA | Speaches / Faster-Whisper | latest-cuda |
 | Inférence GPU | CUDA / CTranslate2 | fp16 |
 
@@ -38,17 +39,17 @@
 sequenceDiagram
   autonumber
   actor User as Utilisateur
-  participant Hotkey as Raccourci Global (F8)
+  participant Hotkey as Raccourci Global (Ctrl+Alt+D)
   participant Recorder as AudioRecorder
   participant Client as WhisperClient
   participant Server as Speaches (GPU Port 8000)
   participant Injector as TextInjector
   participant App as Fenêtre Active (VS Code)
 
-  User->>Hotkey: Appui F8 (Start)
+  User->>Hotkey: Appui Ctrl+Alt+D (Start)
   Hotkey->>Recorder: start()
   User->>Recorder: Dictée vocale
-  User->>Hotkey: Appui F8 (Stop)
+  User->>Hotkey: Appui Ctrl+Alt+D (Stop)
   Hotkey->>Recorder: stop() -> WAV bytes
   Hotkey->>Client: transcribe(WAV)
   Client->>Server: POST /v1/audio/transcriptions
@@ -70,8 +71,8 @@ flowchart TD
   end
 
   subgraph Windows ["Environnement Hôte Windows"]
-    Dictation["Client whisper-dictation<br>(Raccourci global F8, Micro, Injection)"] -->|"HTTP POST http://localhost:8000/v1"| Speaches
-    VRAM_Control["Scripts VRAM ON/OFF<br>(whisper-stop.bat / start.bat)"] -.->|Arrêt / Démarrage| Speaches
+    Dictation["Client whisper-dictation<br>(Lancer-Service-Dictee.vbs, Micro, Injection)"] -->|"HTTP POST http://localhost:8000/v1"| Speaches
+    VRAM_Control["Scripts VRAM ON/OFF<br>(Arreter-Service-Dictee.bat)"] -.->|Arrêt / Démarrage| Speaches
   end
 
   subgraph WSL ["Environnement WSL 2"]
@@ -101,6 +102,6 @@ flowchart TD
 
 | Aspect | Limitation / État | Recommandation |
 |---|---|---|
-| Conflit de raccourci | Si une application capture exclusivement `F8` | Modifier `DICTATION_HOTKEY` dans `.env` (ex: `<ctrl>+<alt>+<space>`) |
-| Serveur éteint | Si le serveur est arrêté pour libérer la VRAM | Le client émet un bip d'erreur et indique la commande de relance |
+| Raccourci natif | `Ctrl + Alt + D` actif par défaut | Modifiable dans `.env` (`DICTATION_HOTKEY`) |
+| Serveur éteint | Si le serveur est arrêté pour libérer la VRAM | Le client émet un bip d'erreur et indique de relancer le service |
 | Micro sous WSL | Exécuter le client sous Windows | Le client de dictée tourne nativement sous Windows pour un accès direct au micro |
