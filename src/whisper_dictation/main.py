@@ -2,7 +2,7 @@
 
 import argparse
 import logging
-import os
+import platform
 import sys
 import time
 from pathlib import Path
@@ -53,17 +53,17 @@ class DictationApp:
             # Vérification préalable de la disponibilité du serveur
             if not self.client.check_health():
                 self.feedback.beep_error()
-                logger.warning(
-                    "Serveur Whisper inactif sur %s. Démarrez-le avec whisper-start.bat",
-                    settings.whisper_base_url,
-                )
+                print("
+[ERREUR] Serveur Whisper inactif sur http://localhost:8000/v1 !")
+                print("Démarrez-le en double-cliquant sur scripts/whisper-start.bat")
                 return
 
-            print("\n>>> ENREGISTREMENT EN COURS... (Parlez maintenant) <<<")
+            print("
+>>> ENREGISTREMENT EN COURS... (Parlez maintenant) <<<")
             self.feedback.beep_start()
             self.recorder.start()
         else:
-            print(">>> ARRET DE L'ENREGISTREMENT -> Transcription GPU en cours... <<<")
+            print(">>> ARRET ENREGISTREMENT -> Transcription GPU en cours... <<<")
             self.feedback.beep_stop()
             self._is_processing = True
             try:
@@ -76,7 +76,7 @@ class DictationApp:
                 # Inférence
                 text = self.client.transcribe(wav_bytes)
                 if text:
-                    print(f">>> TEXTE TRANSCRIT : \"{text}\" -> Collage en cours...")
+                    print(f">>> TRANSCRIPTION : \"{text}\" -> Collage...")
                     self.injector.paste_text(text)
                     self.feedback.beep_success()
                     print(">>> TERMINE !\n")
@@ -93,45 +93,44 @@ class DictationApp:
 
     def run_daemon(self) -> None:
         """Lance l'écouteur global de raccourci clavier en arrière-plan."""
-        try:
-            from pynput import keyboard
-        except ImportError:
-            logger.error(
-                "Le module 'pynput' n'est pas installé. "
-                "Sous Windows, lancez 'uv sync' pour installer les dépendances de raccourcis."
-            )
-            return
-
-        configured_hotkey = settings.dictation_hotkey
         print("=" * 60)
         print("  WHISPER DICTATION (Large-v3 sur GPU CUDA)")
         print(f"  Serveur cible : {settings.whisper_base_url}")
-        print("  Raccourcis disponibles :")
-        print("    -> Ctrl + Alt + V   (Recommandé)")
-        print("    -> Ctrl + Shift + V")
+        print("  Raccourcis natifs actifs :")
+        print("    -> Ctrl + Alt + D   (Recommandé : D pour Dictée)")
+        print("    -> Ctrl + Alt + W   (W pour Whisper)")
         print("    -> F8 (ou Fn+8 sur clavier 60%)")
-        print("    -> F9")
         print("=" * 60)
-        print("En attente d'un raccourci... (Laissez cette fenêtre ouverte ou minimisée)\n")
+        print("En attente d'un raccourci... (Laissez cette fenêtre ouverte)\n")
 
-        # Enregistrement des raccourcis non conflictuels
-        hotkey_map = {
-            configured_hotkey: self.toggle_dictation,
-            "<ctrl>+<alt>+v": self.toggle_dictation,
-            "<ctrl>+<shift>+v": self.toggle_dictation,
-            "<f8>": self.toggle_dictation,
-            "<f9>": self.toggle_dictation,
-        }
+        if platform.system() == "Windows":
+            from whisper_dictation.hotkey import Win32GlobalHotKey
 
-        try:
-            listener = keyboard.GlobalHotKeys(hotkey_map)
-            listener.start()
-            while True:
-                time.sleep(0.5)
-        except (KeyboardInterrupt, SystemExit):
-            print("\nArrêt du service de dictée.")
-        except Exception as err:
-            logger.exception("Erreur inattendue dans la boucle d'écoute : %s", err)
+            hk = Win32GlobalHotKey(self.toggle_dictation)
+            hk.register(1, "ctrl+alt+d")
+            hk.register(2, "ctrl+alt+w")
+            hk.register(3, "f8")
+            if settings.dictation_hotkey not in ("<ctrl>+<alt>+d", "<ctrl>+<alt>+w", "<f8>"):
+                hk.register(4, settings.dictation_hotkey)
+
+            try:
+                hk.listen_loop()
+            except (KeyboardInterrupt, SystemExit):
+                print("\nArrêt du service de dictée.")
+            finally:
+                hk.unregister_all()
+        else:
+            # Fallback pynput sous Linux
+            try:
+                from pynput import keyboard
+                hotkey_map = {
+                    "<ctrl>+<alt>+d": self.toggle_dictation,
+                    "<f8>": self.toggle_dictation,
+                }
+                with keyboard.GlobalHotKeys(hotkey_map) as listener:
+                    listener.join()
+            except Exception as err:
+                logger.error("Erreur pynput Linux : %s", err)
 
 
 def cmd_status() -> None:
