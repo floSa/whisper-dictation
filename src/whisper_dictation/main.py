@@ -4,6 +4,7 @@ import argparse
 import logging
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 from whisper_dictation.audio import AudioRecorder
@@ -13,9 +14,15 @@ from whisper_dictation.feedback import SoundFeedback
 from whisper_dictation.injector import TextInjector
 from whisper_dictation.server_manager import get_server_status, start_server, stop_server
 
+# Journalisation fichier et console
+log_file = Path.home() / ".whisper-dictation.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s : %(message)s",
+    handlers=[
+        logging.FileHandler(str(log_file), encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
 logger = logging.getLogger("whisper-dictation")
 
@@ -37,6 +44,7 @@ class DictationApp:
 
     def toggle_dictation(self) -> None:
         """Bascule entre démarrage et arrêt/transcription de la dictée."""
+        logger.info("Signal raccourci reçu !")
         if self._is_processing:
             logger.debug("Traitement d'une transcription en cours, action ignorée.")
             return
@@ -53,9 +61,11 @@ class DictationApp:
 
             self.feedback.beep_start()
             self.recorder.start()
+            logger.info("Dictée en cours d'enregistrement...")
         else:
             self.feedback.beep_stop()
             self._is_processing = True
+            logger.info("Arrêt de l'enregistrement, envoi au modèle...")
             try:
                 wav_bytes = self.recorder.stop()
                 if not wav_bytes:
@@ -66,10 +76,11 @@ class DictationApp:
                 # Inférence
                 text = self.client.transcribe(wav_bytes)
                 if text:
+                    logger.info("Transcription réussie : '%s'", text)
                     self.injector.paste_text(text)
                     self.feedback.beep_success()
                 else:
-                    logger.info("Transcription vide.")
+                    logger.info("Transcription vide retournée.")
             except WhisperServerUnavailable as err:
                 logger.error("%s", err)
                 self.feedback.beep_error()
@@ -90,21 +101,30 @@ class DictationApp:
             )
             return
 
-        hotkey_str = settings.dictation_hotkey
+        configured_hotkey = settings.dictation_hotkey
         logger.info("Lancement du démon de dictée vocale...")
-        logger.info("Raccourci configuré : %s", hotkey_str)
         logger.info("Serveur Whisper cible : %s (Modèle : %s)", settings.whisper_base_url, settings.whisper_model)
-        logger.info("Appuyez sur %s pour dicter (Ctrl+C pour quitter)", hotkey_str)
 
+        # Enregistrement du raccourci configuré + alternatives ergonomiques (pour claviers 60%)
         hotkey_map = {
-            hotkey_str: self.toggle_dictation,
+            configured_hotkey: self.toggle_dictation,
+            "<ctrl>+<alt>+<space>": self.toggle_dictation,
+            "<ctrl>+<shift>+d": self.toggle_dictation,
         }
 
+        logger.info("Raccourcis actifs : %s", list(hotkey_map.keys()))
+        logger.info("Appuyez sur F8 ou Ctrl+Alt+Espace pour dicter.")
+
         try:
-            with keyboard.GlobalHotKeys(hotkey_map) as listener:
-                listener.join()
+            listener = keyboard.GlobalHotKeys(hotkey_map)
+            listener.start()
+            logger.info("Écouteur clavier démarré avec succès.")
+            while True:
+                time.sleep(0.5)
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("Arrêt demandé par l'utilisateur.")
         except Exception as err:
-            logger.error("Erreur lors de l'écoute du raccourci clavier : %s", err)
+            logger.exception("Erreur inattendue dans la boucle d'écoute : %s", err)
 
 
 def cmd_status() -> None:
