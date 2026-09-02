@@ -1,6 +1,7 @@
 """Point d'entrée principal du client de dictée vocale."""
 
 import argparse
+import ctypes
 import logging
 import platform
 import subprocess
@@ -28,6 +29,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("whisper-dictation")
 
+# Gestion d'instance unique (Mutex Windows)
+_global_mutex = None
+
+
+def acquire_single_instance_lock() -> bool:
+    """Garantit qu'une seule instance de whisper-dictation tourne sous Windows."""
+    global _global_mutex
+    if platform.system() != "Windows":
+        return True
+
+    ERROR_ALREADY_EXISTS = 183
+    _global_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\WhisperDictationGlobalMutex")
+    last_error = ctypes.windll.kernel32.GetLastError()
+    if last_error == ERROR_ALREADY_EXISTS:
+        logger.warning("Une autre instance de whisper-dictation est déjà en cours d'exécution. Fermeture du doublon.")
+        return False
+    return True
+
 
 class DictationApp:
     """Application de dictée globale gérant le raccourci et le cycle d'inférence."""
@@ -51,10 +70,31 @@ class DictationApp:
             return
 
         if not self.recorder.is_recording:
-            # Vérification préalable de la disponibilité du serveur
-            if not self.client.check_health():
-                logger.info("Serveur Whisper inactif, tentative de réveil automatique de WSL et Docker...")
+            # Démarrage instantané de l'enregistrement sans bloquer l'utilisateur
+            print(">>> ENREGISTREMENT EN COURS... (Parlez maintenant) <<<")
+            self.feedback.beep_start()
+            try:
+                self.recorder.start()
+            except Exception as err:
+                logger.error("Impossible de démarrer le micro : %s", err)
+                self.feedback.beep_error(f"Microphone inaccessible : {err}")
+        else:
+            print(">>> ARRET ENREGISTREMENT -> Transcription GPU en cours... <<<")
+            self.feedback.beep_stop()
+            self._is_processing = True
+            try:
+                wav_bytes = self.recorder.stop()
+                if not wav_bytes or len(wav_bytes) < 1000:
+                    logger.warning("Son capturé trop court ou vide.")
+                    self.feedback.beep_error("Enregistrement audio vide ou trop court")
+                    return
+
+                # Tentative d'inférence avec relance automatique si le serveur dormait
+                text = None
                 try:
+                    text = self.client.transcribe(wav_bytes)
+                except WhisperServerUnavailable:
+                    logger.info("Serveur injoignable, tentative de réveil automatique...")
                     subprocess.run(
                         [
                             "wsl.exe",
@@ -68,35 +108,10 @@ class DictationApp:
                         timeout=15,
                         check=False,
                     )
-                    time.sleep(1)
-                except Exception as err:
-                    logger.debug("Échec du réveil automatique : %s", err)
+                    time.sleep(2)
+                    # Seconde tentative après réveil
+                    text = self.client.transcribe(wav_bytes)
 
-                # Seconde vérification après tentative de réveil
-                if not self.client.check_health():
-                    self.feedback.beep_error()
-                    logger.warning(
-                        "Serveur Whisper inactif sur %s. Démarrez-le avec Lancer-Service-Dictee.vbs",
-                        settings.whisper_base_url,
-                    )
-                    return
-
-            print(">>> ENREGISTREMENT EN COURS... (Parlez maintenant) <<<")
-            self.feedback.beep_start()
-            self.recorder.start()
-        else:
-            print(">>> ARRET ENREGISTREMENT -> Transcription GPU en cours... <<<")
-            self.feedback.beep_stop()
-            self._is_processing = True
-            try:
-                wav_bytes = self.recorder.stop()
-                if not wav_bytes:
-                    logger.warning("Aucun son capturé.")
-                    self.feedback.beep_error()
-                    return
-
-                # Inférence
-                text = self.client.transcribe(wav_bytes)
                 if text:
                     print(f">>> TRANSCRIPTION : \"{text}\" -> Collage...")
                     self.injector.paste_text(text)
@@ -105,16 +120,19 @@ class DictationApp:
                 else:
                     logger.info("Transcription vide retournée.")
             except WhisperServerUnavailable as err:
-                logger.error("%s", err)
-                self.feedback.beep_error()
+                logger.error("Serveur indisponible après réveil : %s", err)
+                self.feedback.beep_error(f"Serveur Whisper injoignable : {err}")
             except Exception as err:
-                logger.error("Erreur lors de la transcription : %s", err)
-                self.feedback.beep_error()
+                logger.error("Erreur transcription : %s", err)
+                self.feedback.beep_error(f"Erreur inattendue : {err}")
             finally:
                 self._is_processing = False
 
     def run_daemon(self) -> None:
         """Lance l'écouteur global de raccourci clavier en arrière-plan."""
+        if not acquire_single_instance_lock():
+            sys.exit(0)
+
         print("=" * 60)
         print("  WHISPER DICTATION (Large-v3 sur GPU CUDA)")
         print(f"  Serveur cible : {settings.whisper_base_url}")
@@ -142,7 +160,6 @@ class DictationApp:
             finally:
                 hk.unregister_all()
         else:
-            # Fallback pynput sous Linux
             try:
                 from pynput import keyboard
 

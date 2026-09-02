@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
 
     whisper_base_url: str = Field(
-        default="http://localhost:8000/v1",
+        default="http://127.0.0.1:8000/v1",
         description="URL de base de l'API Whisper (compatible OpenAI).",
     )
     whisper_model: str = Field(

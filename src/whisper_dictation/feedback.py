@@ -28,7 +28,6 @@ class SoundFeedback:
                 except Exception as err:
                     logger.debug("Échec winsound : %s", err)
             else:
-                # Signal sonore terminal / log sur Linux
                 logger.debug("Signal audio (%d Hz, %d ms)", freq, duration_ms)
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -48,9 +47,12 @@ class SoundFeedback:
         logger.info("Transcription collée avec succès.")
         self._play_beep(1046, 80)
 
-    def beep_error(self) -> None:
-        """Double signal grave indiquant une erreur (serveur inaccessible, micro muet...)."""
-        logger.warning("Erreur survenue lors de la dictée.")
+    def beep_error(self, reason: str = "") -> None:
+        """Double signal grave indiquant une erreur."""
+        if reason:
+            logger.warning("Bip d'erreur émis ! Raison : %s", reason)
+        else:
+            logger.warning("Erreur survenue lors de la dictée.")
 
         def _error_worker() -> None:
             if self._is_windows:
