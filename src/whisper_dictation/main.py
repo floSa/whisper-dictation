@@ -3,12 +3,19 @@
 import argparse
 import ctypes
 import logging
+import os
 import platform
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+# Protection vitale pour pythonw.exe (arrière-plan sans console sous Windows)
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 from whisper_dictation.audio import AudioRecorder
 from whisper_dictation.client import WhisperClient, WhisperServerUnavailable
@@ -19,13 +26,16 @@ from whisper_dictation.server_manager import get_server_status, start_server, st
 
 # Journalisation fichier et console
 log_file = Path.home() / ".whisper-dictation.log"
+handlers = [logging.FileHandler(str(log_file), encoding="utf-8")]
+if sys.stdout and sys.stdout is not sys.__stdout__:
+    pass
+elif sys.stdout:
+    handlers.append(logging.StreamHandler(sys.stdout))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(str(log_file), encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
+    handlers=handlers,
 )
 logger = logging.getLogger("whisper-dictation")
 
@@ -154,8 +164,17 @@ class DictationApp:
 
         logger.info("Écouteur pynput actif sur : %s", list(hotkey_map.keys()))
 
-        with keyboard.GlobalHotKeys(hotkey_map) as listener:
-            listener.join()
+        listener = keyboard.GlobalHotKeys(hotkey_map)
+        listener.start()
+        logger.info("Écouteur pynput démarré avec succès en tâche de fond.")
+
+        try:
+            while True:
+                time.sleep(0.5)
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("Arrêt de l'écouteur.")
+        finally:
+            listener.stop()
 
 
 def cmd_status() -> None:
