@@ -99,27 +99,31 @@ class DictationApp:
                     self.feedback.beep_error("Enregistrement audio vide ou trop court")
                     return
 
-                # Inférence avec auto-réveil du serveur si besoin
+                # Inférence avec retry rapide avant réveil automatique
                 text = None
                 try:
                     text = self.client.transcribe(wav_bytes)
                 except WhisperServerUnavailable:
-                    logger.info("Serveur indisponible, tentative de réveil automatique...")
-                    subprocess.run(
-                        [
-                            "wsl.exe",
-                            "-d",
-                            "Ubuntu-24.04",
-                            "--",
-                            "bash",
-                            "/home/florian/mes_projets/whisper-dictation/scripts/start_server.sh",
-                        ],
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                        timeout=15,
-                        check=False,
-                    )
-                    time.sleep(2)
-                    text = self.client.transcribe(wav_bytes)
+                    if self.client.check_health():
+                        logger.info("Serveur en ligne (simple coupure de socket), tentative immédiate...")
+                        text = self.client.transcribe(wav_bytes)
+                    else:
+                        logger.info("Serveur indisponible, tentative de réveil automatique...")
+                        subprocess.run(
+                            [
+                                "wsl.exe",
+                                "-d",
+                                "Ubuntu-24.04",
+                                "--",
+                                "bash",
+                                "/home/florian/mes_projets/whisper-dictation/scripts/start_server.sh",
+                            ],
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                            timeout=15,
+                            check=False,
+                        )
+                        time.sleep(2)
+                        text = self.client.transcribe(wav_bytes)
 
                 if text:
                     print(f">>> TRANSCRIPTION : \"{text}\" -> Collage...")
