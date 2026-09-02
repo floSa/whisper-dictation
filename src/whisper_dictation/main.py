@@ -3,6 +3,7 @@
 import argparse
 import logging
 import platform
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -52,10 +53,33 @@ class DictationApp:
         if not self.recorder.is_recording:
             # Vérification préalable de la disponibilité du serveur
             if not self.client.check_health():
-                self.feedback.beep_error()
-                print("[ERREUR] Serveur Whisper inactif sur http://localhost:8000/v1 !")
-                print("Démarrez-le en double-cliquant sur scripts/whisper-start.bat")
-                return
+                logger.info("Serveur Whisper inactif, tentative de réveil automatique de WSL et Docker...")
+                try:
+                    subprocess.run(
+                        [
+                            "wsl.exe",
+                            "-d",
+                            "Ubuntu-24.04",
+                            "--",
+                            "bash",
+                            "/home/florian/mes_projets/whisper-dictation/scripts/start_server.sh",
+                        ],
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                        timeout=15,
+                        check=False,
+                    )
+                    time.sleep(1)
+                except Exception as err:
+                    logger.debug("Échec du réveil automatique : %s", err)
+
+                # Seconde vérification après tentative de réveil
+                if not self.client.check_health():
+                    self.feedback.beep_error()
+                    logger.warning(
+                        "Serveur Whisper inactif sur %s. Démarrez-le avec Lancer-Service-Dictee.vbs",
+                        settings.whisper_base_url,
+                    )
+                    return
 
             print(">>> ENREGISTREMENT EN COURS... (Parlez maintenant) <<<")
             self.feedback.beep_start()
@@ -121,6 +145,7 @@ class DictationApp:
             # Fallback pynput sous Linux
             try:
                 from pynput import keyboard
+
                 hotkey_map = {
                     "<ctrl>+<alt>+d": self.toggle_dictation,
                     "<f8>": self.toggle_dictation,
