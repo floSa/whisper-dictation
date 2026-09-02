@@ -32,6 +32,26 @@ class TextInjector:
         time.sleep(self.paste_delay_sec)
 
         # Simulation de la combinaison Ctrl+V
+        if self._is_windows:
+            try:
+                import ctypes
+
+                VK_CONTROL = 0x11
+                VK_V = 0x56
+                KEYEVENTF_KEYUP = 0x0002
+
+                user32 = ctypes.windll.user32
+                user32.keybd_event(VK_CONTROL, 0, 0, 0)
+                user32.keybd_event(VK_V, 0, 0, 0)
+                time.sleep(0.01)
+                user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
+                user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+                logger.debug("Combinaison Ctrl+V envoyée via Win32 keybd_event natif.")
+                return
+            except Exception as err:
+                logger.error("Erreur keybd_event Win32 : %s", err)
+
+        # Fallback pour Linux ou si Win32 échoue
         try:
             from pynput.keyboard import Controller, Key
 
@@ -40,12 +60,10 @@ class TextInjector:
                 keyboard.press("v")
                 keyboard.release("v")
             logger.debug("Combinaison Ctrl+V envoyée via pynput.")
-        except Exception as err:
-            logger.debug("pynput non disponible ou erreur Ctrl+V : %s", err)
+        except Exception:
             try:
                 import pyautogui
 
                 pyautogui.hotkey("ctrl", "v")
-                logger.debug("Combinaison Ctrl+V envoyée via pyautogui.")
             except Exception as err_fallback:
                 logger.debug("pyautogui non disponible : %s", err_fallback)

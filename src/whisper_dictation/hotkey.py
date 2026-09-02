@@ -4,6 +4,7 @@ import ctypes
 import ctypes.wintypes
 import logging
 import platform
+import time
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def parse_hotkey_string(hotkey_str: str) -> tuple[int, int]:
 
 
 class Win32GlobalHotKey:
-    """Écouteur de raccourcis globaux basé sur RegisterHotKey de l\'API Windows."""
+    """Écouteur de raccourcis globaux basé sur RegisterHotKey de l'API Windows."""
 
     def __init__(self, callback: Callable[[], None]) -> None:
         self.callback = callback
@@ -72,7 +73,7 @@ class Win32GlobalHotKey:
         """Enregistre un raccourci global auprès du noyau Windows."""
         mods, vk = parse_hotkey_string(hotkey_str)
         if vk == 0:
-            logger.error("Impossible d\'enregistrer le raccourci invalide : %s", hotkey_str)
+            logger.error("Impossible d'enregistrer le raccourci invalide : %s", hotkey_str)
             return False
 
         res = self.user32.RegisterHotKey(None, hotkey_id, mods, vk)
@@ -82,7 +83,7 @@ class Win32GlobalHotKey:
             return True
         else:
             err = self.kernel32.GetLastError()
-            logger.warning("Échec de l\'enregistrement du raccourci '%s' (Erreur Win32 : %d)", hotkey_str, err)
+            logger.warning("Échec de l'enregistrement du raccourci '%s' (Erreur Win32 : %d)", hotkey_str, err)
             return False
 
     def listen_loop(self) -> None:
@@ -95,18 +96,30 @@ class Win32GlobalHotKey:
             while self._is_running:
                 # GetMessage bloque efficacement sans consommer de CPU
                 res = self.user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
-                if res == 0 or res == -1:  # WM_QUIT ou erreur
+                if not self._is_running:
                     break
+
+                if res == -1:
+                    logger.error("Erreur GetMessageW : %d", self.kernel32.GetLastError())
+                    time.sleep(0.05)
+                    continue
+
+                if res == 0:
+                    # Message WM_QUIT ignoré pour maintenir le service actif
+                    logger.debug("Message WM_QUIT reçu, maintien de la boucle actif.")
+                    continue
 
                 if msg.message == WM_HOTKEY:
                     logger.info("Événement WM_HOTKEY détecté (ID: %d) !", msg.wParam)
                     try:
                         self.callback()
                     except Exception as err:
-                        logger.error("Erreur dans le callback de dictée : %s", err)
+                        logger.exception("Erreur dans le callback de dictée : %s", err)
 
                 self.user32.TranslateMessage(ctypes.byref(msg))
                 self.user32.DispatchMessageW(ctypes.byref(msg))
+        except Exception as err:
+            logger.exception("Erreur inattendue dans la boucle Win32 : %s", err)
         finally:
             self.unregister_all()
 
@@ -118,7 +131,6 @@ class Win32GlobalHotKey:
         logger.info("Tous les raccourcis Win32 ont été libérés.")
 
     def stop(self) -> None:
-        """Arrête la boucle d\'écoute."""
+        """Arrête la boucle d'écoute."""
         self._is_running = False
-        # Réveille la boucle GetMessage
         self.user32.PostQuitMessage(0)
