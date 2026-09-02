@@ -29,7 +29,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("whisper-dictation")
 
-# Gestion d'instance unique (Mutex Windows dans l'espace utilisateur)
 _global_mutex = None
 
 
@@ -65,6 +64,7 @@ class DictationApp:
 
     def toggle_dictation(self) -> None:
         """Bascule entre démarrage et arrêt/transcription de la dictée."""
+        logger.info("Signal raccourci reçu !")
         if self._is_processing:
             logger.debug("Traitement d'une transcription en cours, action ignorée.")
             return
@@ -135,41 +135,27 @@ class DictationApp:
         print("=" * 60)
         print("  WHISPER DICTATION (Large-v3 sur GPU CUDA)")
         print(f"  Serveur cible : {settings.whisper_base_url}")
-        print("  Raccourcis natifs actifs :")
+        print("  Raccourcis actifs :")
         print("    -> Ctrl + Alt + D   (Recommandé : D pour Dictée)")
         print("    -> Ctrl + Alt + W   (W pour Whisper)")
         print("    -> F8 (ou Fn+8 sur clavier 60%)")
         print("=" * 60)
         print("En attente d'un raccourci... (Laissez cette fenêtre ouverte)\n")
 
-        if platform.system() == "Windows":
-            from whisper_dictation.hotkey import Win32GlobalHotKey
+        from pynput import keyboard
 
-            hk = Win32GlobalHotKey(self.toggle_dictation)
-            hk.register(1, "ctrl+alt+d")
-            hk.register(2, "ctrl+alt+w")
-            hk.register(3, "f8")
-            if settings.dictation_hotkey not in ("<ctrl>+<alt>+d", "<ctrl>+<alt>+w", "<f8>"):
-                hk.register(4, settings.dictation_hotkey)
+        hotkey_map = {
+            "<ctrl>+<alt>+d": self.toggle_dictation,
+            "<ctrl>+<alt>+w": self.toggle_dictation,
+            "<f8>": self.toggle_dictation,
+        }
+        if settings.dictation_hotkey not in hotkey_map:
+            hotkey_map[settings.dictation_hotkey] = self.toggle_dictation
 
-            try:
-                hk.listen_loop()
-            except (KeyboardInterrupt, SystemExit):
-                print("\nArrêt du service de dictée.")
-            finally:
-                hk.unregister_all()
-        else:
-            try:
-                from pynput import keyboard
+        logger.info("Écouteur pynput actif sur : %s", list(hotkey_map.keys()))
 
-                hotkey_map = {
-                    "<ctrl>+<alt>+d": self.toggle_dictation,
-                    "<f8>": self.toggle_dictation,
-                }
-                with keyboard.GlobalHotKeys(hotkey_map) as listener:
-                    listener.join()
-            except Exception as err:
-                logger.error("Erreur pynput Linux : %s", err)
+        with keyboard.GlobalHotKeys(hotkey_map) as listener:
+            listener.join()
 
 
 def cmd_status() -> None:
